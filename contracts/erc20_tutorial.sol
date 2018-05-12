@@ -1,37 +1,41 @@
-pragma solidity ^0.4.18;
+pragma solidity ^0.4.21;
 
 // ----------------------------------------------------------------------------
-// '0Fucks' token contract
+// 'OIT Mining' token contract
 //
-// Deployed to : 0x5A86f0cafD4ef3ba4f0344C138afcC84bd1ED222
-// Symbol      : 0FUCKS
-// Name        : 0 Fucks Token
+// Deployed to : 
+// Symbol      : OIT-M
+// Name        : OIT Mining Token
 // Total supply: 100000000
 // Decimals    : 18
 //
-// Enjoy.
-//
+// 
+// TODO: 
+// 1. Add state machine to enable turning on/off
+// 2. Complete dividends payout
+// Based on https://github.com/bitfwdcommunity/Issue-your-own-ERC20-token
 // (c) by Moritz Neto with BokkyPooBah / Bok Consulting Pty Ltd Au 2017. The MIT Licence.
+//
 // ----------------------------------------------------------------------------
 
 
 // ----------------------------------------------------------------------------
 // Safe maths
 // ----------------------------------------------------------------------------
-contract SafeMath {
-    function safeAdd(uint a, uint b) public pure returns (uint c) {
+library SafeMath {
+    function safeAdd(uint256 a, uint256 b) public pure returns (uint256 c) {
         c = a + b;
         require(c >= a);
     }
-    function safeSub(uint a, uint b) public pure returns (uint c) {
+    function safeSub(uint256 a, uint256 b) public pure returns (uint256 c) {
         require(b <= a);
         c = a - b;
     }
-    function safeMul(uint a, uint b) public pure returns (uint c) {
+    function safeMul(uint256 a, uint256 b) public pure returns (uint256 c) {
         c = a * b;
         require(a == 0 || c / a == b);
     }
-    function safeDiv(uint a, uint b) public pure returns (uint c) {
+    function safeDiv(uint256 a, uint256 b) public pure returns (uint256 c) {
         require(b > 0);
         c = a / b;
     }
@@ -42,7 +46,7 @@ contract SafeMath {
 // ERC Token Standard #20 Interface
 // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20-token-standard.md
 // ----------------------------------------------------------------------------
-contract ERC20Interface {
+contract ERC20 {
     function totalSupply() public constant returns (uint);
     function balanceOf(address tokenOwner) public constant returns (uint balance);
     function allowance(address tokenOwner, address spender) public constant returns (uint remaining);
@@ -55,19 +59,128 @@ contract ERC20Interface {
 }
 
 
-// ----------------------------------------------------------------------------
-// Contract function to receive approval and execute function in one call
-//
-// Borrowed from MiniMeToken
-// ----------------------------------------------------------------------------
-contract ApproveAndCallFallBack {
-    function receiveApproval(address from, uint256 tokens, address token, bytes data) public;
+contract OITToken is ERC20 {
+    using SafeMath for uint256;
+
+    struct Account {
+        uint256 balance = 0;
+        uint256 dividendsPaid = 0;
+        uint256 lastDividends = 0;
+    }
+
+    uint pointMultiplier = 10e18;
+    string public constant symbol = 'OIT-M';
+    string public constant name = 'OIT Mining Token';
+    uint8 public constant decimals = 18;
+    uint256 private totalSupply = 0;
+    uint256 public totalDividends = 0;
+    mapping(address => Account) accounts;
+    mapping(address => mapping(address => uint)) allowed;
+
+    event DividendPaid(address indexed account, uint256 amount);
+
+    address public controller;
+
+    modifier controllerOnly {
+        require(msg.sender == controller);
+        _;
+    }
+
+    function mint(address _recipient, uint256, _value) external controllerOnly {
+        require(_value > 0);
+        Account recipient = accounts[_recipient];
+        recipient.balance.add(_value);
+        totalSupply = totalSupply.add(_value);
+        Transfer(0x0, _recipient, _value);
+    }
+
+    function dividendsOwing(Account account) internal returns(uint256) {
+        var newDividends = totalDividends - account.lastDividends;
+        return (account.balance * newDividends) / totalSupply;
+    }
+
+    function balanceOf(address tokenOwner) public constant returns (uint256 balance) {
+        return accounts[tokenOwner].balance;
+    }
+
+    /**
+    *   @dev Allows another account/contract to spend some tokens on its behalf
+    *   throws on any error rather then return a false flag to minimize user errors
+    *
+    *   also, to minimize the risk of the approve/transferFrom attack vector
+    *   approve has to be called twice in 2 separate transactions - once to
+    *   change the allowance to 0 and secondly to change it to the new allowance
+    *   value
+    *
+    *   @param _spender      approved address
+    *   @param _amount       allowance amount
+    *
+    *   @return true if the approval was successful
+    */
+    function approve(address _spender, uint _amount) public returns (bool success) {
+        require((_amount == 0) || (allowed[msg.sender][_spender] == 0));
+        allowed[msg.sender][_spender] = amount;
+        Approval(msg.sender, _spender, _amount);
+        return true;
+
+    }
+
+   /**
+    *   @dev Function to check the amount of tokens that an owner allowed to a spender.
+    *
+    *   @param _owner        the address which owns the funds
+    *   @param _spender      the address which will spend the funds
+    *
+    *   @return              the amount of tokens still avaible for the spender
+    */
+    function allowance(address _owner, address _spender) public constant returns (uint256) {
+        return allowed[_owner][_spender];
+    }
+
+    function transferFrom(address _from, address _to, uint256 amount) public return (bool) {
+        Account from = accounts[_from];
+        Account recipient = accounts[_to];
+        from.balance = from.balance.sub(_amount);
+        allowed[_from][msg.sender] = allowed[_from][msg.sender].sub(_amount);
+        recipient.balance = recipient.balance.add(_amount);
+        Transfer(_from, _to);
+        return true;
+    }
+
+   /**
+    *   @dev Send tokens 
+    *    throws on any error rather then return a false flag to minimize
+    *   user errors
+    *   @param _to           target address
+    *   @param _amount       transfer amount
+    *
+    *   @return true if the transfer was successful
+    */
+    function transfer(address _to, uint256 _amount) public returns (bool success) {
+        Account sender = accounts[msg.sender];
+        Account recipient = accounts[_to]
+        sender.balance = sender.balance.sub(_amount);
+        recipient.balance = recipient.balance.add(_amount);
+        Transfer(msg.sender, _to, amount);
+        return true;
+    }
+
+    function widthdrawDividends(address _account) external controllerOnly {
+        account = accounts[_account]
+        uint256 owing = dividendsOwing(account);
+        if (owing > 0) {
+            _account.transfer(owing);
+            account.lastDividends = totalDividends;
+            DividendPaid(_account, owing);
+        }
+    }
+    
+    function() external payable {
+        totalDividends = totalDividends.add(msg.value)
+    }
 }
 
 
-// ----------------------------------------------------------------------------
-// Owned contract
-// ----------------------------------------------------------------------------
 contract Owned {
     address public owner;
     address public newOwner;
@@ -86,138 +199,58 @@ contract Owned {
     function transferOwnership(address _newOwner) public onlyOwner {
         newOwner = _newOwner;
     }
+
     function acceptOwnership() public {
         require(msg.sender == newOwner);
         OwnershipTransferred(owner, newOwner);
         owner = newOwner;
         newOwner = address(0);
     }
-}
 
 
-// ----------------------------------------------------------------------------
-// ERC20 Token, with the addition of symbol, name and decimals and assisted
-// token transfers
-// ----------------------------------------------------------------------------
-contract FucksToken is ERC20Interface, Owned, SafeMath {
-    string public symbol;
-    string public  name;
-    uint8 public decimals;
-    uint public _totalSupply;
+contract OITMining is Owned {
+    OITToken public OIT = OITToken(this);
+    using SafeMath for uint256;
+    uint256 public ethRate = 730;
+    uint256 dollarsPerToken = 10;
+    uint256 tokenPrice;
 
-    mapping(address => uint) balances;
-    mapping(address => mapping(address => uint)) allowed;
-
+    event Disbursement(uint256 amount);
 
     // ------------------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------------------
-    function FucksToken() public {
-        symbol = "0FUCKS";
-        name = "0 Fucks Token";
-        decimals = 18;
-        _totalSupply = 100000000000000000000000000;
-        balances[0x5A86f0cafD4ef3ba4f0344C138afcC84bd1ED222] = _totalSupply;
-        Transfer(address(0), 0x5A86f0cafD4ef3ba4f0344C138afcC84bd1ED222, _totalSupply);
+    function OITMining() public {
+        updatePrice();
     }
 
-
-    // ------------------------------------------------------------------------
-    // Total supply
-    // ------------------------------------------------------------------------
-    function totalSupply() public constant returns (uint) {
-        return _totalSupply  - balances[address(0)];
+    function invest(address _investor, uint256 _value) private {
+        OIT.mint(_investor, _value);
     }
 
-
-    // ------------------------------------------------------------------------
-    // Get the token balance for account tokenOwner
-    // ------------------------------------------------------------------------
-    function balanceOf(address tokenOwner) public constant returns (uint balance) {
-        return balances[tokenOwner];
+    function setRate(uint256 _ethRate) external onlyOwner {
+        ethRate = _ethRate;
+        updatePrice();
     }
 
-
-    // ------------------------------------------------------------------------
-    // Transfer the balance from token owner's account to to account
-    // - Owner's account must have sufficient balance to transfer
-    // - 0 value transfers are allowed
-    // ------------------------------------------------------------------------
-    function transfer(address to, uint tokens) public returns (bool success) {
-        balances[msg.sender] = safeSub(balances[msg.sender], tokens);
-        balances[to] = safeAdd(balances[to], tokens);
-        Transfer(msg.sender, to, tokens);
-        return true;
+    function updatePrice() internal {
+        tokenPrice = dollarsPerToken.div(ethRate);
     }
 
-
-    // ------------------------------------------------------------------------
-    // Token owner can approve for spender to transferFrom(...) tokens
-    // from the token owner's account
-    //
-    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20-token-standard.md
-    // recommends that there are no checks for the approval double-spend attack
-    // as this should be implemented in user interfaces 
-    // ------------------------------------------------------------------------
-    function approve(address spender, uint tokens) public returns (bool success) {
-        allowed[msg.sender][spender] = tokens;
-        Approval(msg.sender, spender, tokens);
-        return true;
+    function disburse(uint256 _amount) external onlyOwner {
+        OIT.transfer(_amount);
+        Disbursement(_amount);
     }
 
-
-    // ------------------------------------------------------------------------
-    // Transfer tokens from the from account to the to account
-    // 
-    // The calling account must already have sufficient tokens approve(...)-d
-    // for spending from the from account and
-    // - From account must have sufficient balance to transfer
-    // - Spender must have sufficient allowance to transfer
-    // - 0 value transfers are allowed
-    // ------------------------------------------------------------------------
-    function transferFrom(address from, address to, uint tokens) public returns (bool success) {
-        balances[from] = safeSub(balances[from], tokens);
-        allowed[from][msg.sender] = safeSub(allowed[from][msg.sender], tokens);
-        balances[to] = safeAdd(balances[to], tokens);
-        Transfer(from, to, tokens);
-        return true;
+    function offlineInvest(address _investor, uint256 _value) external onlyOwner {
+        invest(_investor, _value);
     }
 
-
-    // ------------------------------------------------------------------------
-    // Returns the amount of tokens approved by the owner that can be
-    // transferred to the spender's account
-    // ------------------------------------------------------------------------
-    function allowance(address tokenOwner, address spender) public constant returns (uint remaining) {
-        return allowed[tokenOwner][spender];
+    function withdrawDividends() external {
+        OIT.payDividends(msg.sender);
     }
 
-
-    // ------------------------------------------------------------------------
-    // Token owner can approve for spender to transferFrom(...) tokens
-    // from the token owner's account. The spender contract function
-    // receiveApproval(...) is then executed
-    // ------------------------------------------------------------------------
-    function approveAndCall(address spender, uint tokens, bytes data) public returns (bool success) {
-        allowed[msg.sender][spender] = tokens;
-        Approval(msg.sender, spender, tokens);
-        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, tokens, this, data);
-        return true;
-    }
-
-
-    // ------------------------------------------------------------------------
-    // Don't accept ETH
-    // ------------------------------------------------------------------------
-    function () public payable {
-        revert();
-    }
-
-
-    // ------------------------------------------------------------------------
-    // Owner can transfer out any accidentally sent ERC20 tokens
-    // ------------------------------------------------------------------------
-    function transferAnyERC20Token(address tokenAddress, uint tokens) public onlyOwner returns (bool success) {
-        return ERC20Interface(tokenAddress).transfer(owner, tokens);
+    function() external payable {
+        OIT.mint(msg.sender, msg.value.div(tokenPrice));
     }
 }
