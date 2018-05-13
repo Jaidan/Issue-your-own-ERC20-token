@@ -1,4 +1,4 @@
-pragma solidity ^0.4.21;
+pragma solidity ^0.4.22;
 
 // ----------------------------------------------------------------------------
 // 'OIT Mining' token contract
@@ -6,13 +6,11 @@ pragma solidity ^0.4.21;
 // Deployed to : 
 // Symbol      : OIT-M
 // Name        : OIT Mining Token
-// Total supply: 100000000
 // Decimals    : 18
 //
 // 
 // TODO: 
 // 1. Add state machine to enable turning on/off
-// 2. Complete dividends payout
 // Based on https://github.com/bitfwdcommunity/Issue-your-own-ERC20-token
 // (c) by Moritz Neto with BokkyPooBah / Bok Consulting Pty Ltd Au 2017. The MIT Licence.
 //
@@ -23,19 +21,19 @@ pragma solidity ^0.4.21;
 // Safe maths
 // ----------------------------------------------------------------------------
 library SafeMath {
-    function safeAdd(uint256 a, uint256 b) public pure returns (uint256 c) {
+    function add(uint256 a, uint256 b) public pure returns (uint256 c) {
         c = a + b;
         require(c >= a);
     }
-    function safeSub(uint256 a, uint256 b) public pure returns (uint256 c) {
+    function sub(uint256 a, uint256 b) public pure returns (uint256 c) {
         require(b <= a);
         c = a - b;
     }
-    function safeMul(uint256 a, uint256 b) public pure returns (uint256 c) {
+    function mul(uint256 a, uint256 b) public pure returns (uint256 c) {
         c = a * b;
         require(a == 0 || c / a == b);
     }
-    function safeDiv(uint256 a, uint256 b) public pure returns (uint256 c) {
+    function div(uint256 a, uint256 b) public pure returns (uint256 c) {
         require(b > 0);
         c = a / b;
     }
@@ -47,9 +45,9 @@ library SafeMath {
 // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20-token-standard.md
 // ----------------------------------------------------------------------------
 contract ERC20 {
-    function totalSupply() public constant returns (uint);
-    function balanceOf(address tokenOwner) public constant returns (uint balance);
-    function allowance(address tokenOwner, address spender) public constant returns (uint remaining);
+    function totalSupply() public view returns (uint);
+    function balanceOf(address tokenOwner) public view returns (uint balance);
+    function allowance(address tokenOwner, address spender) public view returns (uint remaining);
     function transfer(address to, uint tokens) public returns (bool success);
     function approve(address spender, uint tokens) public returns (bool success);
     function transferFrom(address from, address to, uint tokens) public returns (bool success);
@@ -63,43 +61,43 @@ contract OITToken is ERC20 {
     using SafeMath for uint256;
 
     struct Account {
-        uint256 balance = 0;
-        uint256 dividendsPaid = 0;
-        uint256 lastDividends = 0;
+        uint256 balance;
+        uint256 dividendsPaid;
+        uint256 lastDividendPoints;
     }
 
-    uint pointMultiplier = 10e18;
-    string public constant symbol = 'OIT-M';
-    string public constant name = 'OIT Mining Token';
+    uint constant pointMultiplier = 10e18;
+    string public constant symbol = "OIT-M";
+    string public constant name = "OIT Mining Token";
     uint8 public constant decimals = 18;
-    uint256 private totalSupply = 0;
-    uint256 public totalDividends = 0;
+    uint256 private _totalSupply = 0;
+    uint256 public unclaimedDividends = 0;
+    uint256 public totalDividendPoints = 0;
+    address public controller;
     mapping(address => Account) accounts;
     mapping(address => mapping(address => uint)) allowed;
-
     event DividendPaid(address indexed account, uint256 amount);
 
-    address public controller;
 
     modifier controllerOnly {
         require(msg.sender == controller);
         _;
     }
 
-    function mint(address _recipient, uint256, _value) external controllerOnly {
+    function mint(address _recipient, uint256 _value) external controllerOnly {
         require(_value > 0);
-        Account recipient = accounts[_recipient];
+        Account storage recipient = accounts[_recipient];
         recipient.balance.add(_value);
-        totalSupply = totalSupply.add(_value);
-        Transfer(0x0, _recipient, _value);
+        _totalSupply = _totalSupply.add(_value);
+        emit Transfer(0x0, _recipient, _value);
     }
 
-    function dividendsOwing(Account account) internal returns(uint256) {
-        var newDividends = totalDividends - account.lastDividends;
-        return (account.balance * newDividends) / totalSupply;
+    function dividendsOwing(Account account) internal view returns(uint256) {
+        uint256 newDividendPoints = totalDividendPoints - account.lastDividendPoints;
+        return (account.balance * newDividendPoints) / pointMultiplier;
     }
 
-    function balanceOf(address tokenOwner) public constant returns (uint256 balance) {
+    function balanceOf(address tokenOwner) public view returns (uint256 balance) {
         return accounts[tokenOwner].balance;
     }
 
@@ -119,8 +117,8 @@ contract OITToken is ERC20 {
     */
     function approve(address _spender, uint _amount) public returns (bool success) {
         require((_amount == 0) || (allowed[msg.sender][_spender] == 0));
-        allowed[msg.sender][_spender] = amount;
-        Approval(msg.sender, _spender, _amount);
+        allowed[msg.sender][_spender] = _amount;
+        emit Approval(msg.sender, _spender, _amount);
         return true;
 
     }
@@ -133,18 +131,22 @@ contract OITToken is ERC20 {
     *
     *   @return              the amount of tokens still avaible for the spender
     */
-    function allowance(address _owner, address _spender) public constant returns (uint256) {
+    function allowance(address _owner, address _spender) public view returns (uint256) {
         return allowed[_owner][_spender];
     }
 
-    function transferFrom(address _from, address _to, uint256 amount) public return (bool) {
-        Account from = accounts[_from];
-        Account recipient = accounts[_to];
+    function transferFrom(address _from, address _to, uint256 _amount) public returns (bool) {
+        Account storage from = accounts[_from];
+        Account storage recipient = accounts[_to];
         from.balance = from.balance.sub(_amount);
         allowed[_from][msg.sender] = allowed[_from][msg.sender].sub(_amount);
         recipient.balance = recipient.balance.add(_amount);
-        Transfer(_from, _to);
+        emit Transfer(_from, _to, _amount);
         return true;
+    }
+    
+    function totalSupply() public view returns(uint256) {
+        return _totalSupply;
     }
 
    /**
@@ -157,26 +159,28 @@ contract OITToken is ERC20 {
     *   @return true if the transfer was successful
     */
     function transfer(address _to, uint256 _amount) public returns (bool success) {
-        Account sender = accounts[msg.sender];
-        Account recipient = accounts[_to]
+        Account storage sender = accounts[msg.sender];
+        Account storage recipient = accounts[_to];
         sender.balance = sender.balance.sub(_amount);
         recipient.balance = recipient.balance.add(_amount);
-        Transfer(msg.sender, _to, amount);
+        emit Transfer(msg.sender, _to, _amount);
         return true;
     }
 
-    function widthdrawDividends(address _account) external controllerOnly {
-        account = accounts[_account]
+    function payDividends(address _account) external controllerOnly {
+        Account storage account = accounts[_account];
         uint256 owing = dividendsOwing(account);
         if (owing > 0) {
+            unclaimedDividends = unclaimedDividends.sub(owing);
             _account.transfer(owing);
-            account.lastDividends = totalDividends;
-            DividendPaid(_account, owing);
+            account.lastDividendPoints = totalDividendPoints;
+            emit DividendPaid(_account, owing);
         }
     }
     
     function() external payable {
-        totalDividends = totalDividends.add(msg.value)
+        uint256 newPoints = msg.value.mul(pointMultiplier).div(_totalSupply);
+        totalDividendPoints = totalDividendPoints.add(newPoints);
     }
 }
 
@@ -187,7 +191,7 @@ contract Owned {
 
     event OwnershipTransferred(address indexed _from, address indexed _to);
 
-    function Owned() public {
+    constructor() public {
         owner = msg.sender;
     }
 
@@ -202,10 +206,11 @@ contract Owned {
 
     function acceptOwnership() public {
         require(msg.sender == newOwner);
-        OwnershipTransferred(owner, newOwner);
+        emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
         newOwner = address(0);
     }
+}
 
 
 contract OITMining is Owned {
@@ -215,14 +220,39 @@ contract OITMining is Owned {
     uint256 dollarsPerToken = 10;
     uint256 tokenPrice;
 
+    enum Status {
+        Created,
+        InitialInvestment,
+        OpenInvestment,
+        Closed,
+        Paused
+    }
+
+    Status status = Status.Created;
+
     event Disbursement(uint256 amount);
+    event LogStartInitialInvestment();
+    event LogStartOpenInvestment();
+    event LogCloseInvestment();
+    event LogPauseAll();
 
     // ------------------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------------------
-    function OITMining() public {
+    constructor() public {
         updatePrice();
     }
+
+    modifier requireActive {
+        require((status == Status.InitialInvestment) || (status == Status.OpenInvestment) || (status == Status.Closed));
+        _;
+    }
+    
+    modifier investmentActive {
+        require((status == Status.InitialInvestment) || (status == Status.OpenInvestment));
+        _;
+    }
+
 
     function invest(address _investor, uint256 _value) private {
         OIT.mint(_investor, _value);
@@ -237,20 +267,44 @@ contract OITMining is Owned {
         tokenPrice = dollarsPerToken.div(ethRate);
     }
 
-    function disburse(uint256 _amount) external onlyOwner {
-        OIT.transfer(_amount);
-        Disbursement(_amount);
+    function disburse(uint256 _amount) external onlyOwner requireActive {
+        address(OIT).transfer(_amount);
+        emit Disbursement(_amount);
     }
 
-    function offlineInvest(address _investor, uint256 _value) external onlyOwner {
+    function offlineInvest(address _investor, uint256 _value) external onlyOwner investmentActive {
         invest(_investor, _value);
     }
 
-    function withdrawDividends() external {
+    function withdrawDividends() external requireActive {
         OIT.payDividends(msg.sender);
     }
 
+    function startInitialInvestment() external onlyOwner {
+        require(status == Status.Created);
+        status = Status.InitialInvestment;
+        emit LogStartInitialInvestment();
+    }
+
+    function startOpenInvestment() external onlyOwner {
+        require((status == Status.Created) || (status == Status.Closed) || (status == Status.Paused));
+        status = Status.InitialInvestment;
+        emit LogStartOpenInvestment();
+    }
+
+    function stopInvestment() external onlyOwner requireActive {
+        require((status == Status.InitialInvestment) || (status == Status.OpenInvestment) || (status == Status.Paused));
+        status = Status.InitialInvestment;
+        emit LogCloseInvestment();
+    }
+
+    function pauseAll() external onlyOwner {
+        status = Status.Paused;
+        emit LogPauseAll();
+    }
+
     function() external payable {
+        require(status == Status.OpenInvestment);
         OIT.mint(msg.sender, msg.value.div(tokenPrice));
     }
 }
